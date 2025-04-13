@@ -3,17 +3,15 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/joho/godotenv"
+	"github.com/labstack/echo/v4"
+	"html/template"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
-
-	"github.com/labstack/echo/v4"
-	//"github.com/labstack/echo/v4/middleware"
-	"html/template"
-	"io"
-
-	"github.com/joho/godotenv"
+	"time"
 )
 
 type Templates struct {
@@ -30,18 +28,57 @@ func newTemplate() *Templates {
 	}
 }
 
+type UserData struct {
+	Name string
+}
+
 func main() {
 	godotenv.Load()
 	e := echo.New()
-	//e.Use(middleware.Logger())
 	e.Renderer = newTemplate()
+
 	e.GET("/", func(c echo.Context) error {
-		return c.Render(200, "index", nil)
+		cookie, err := c.Cookie("access_token")
+		if err != nil {
+			return c.Render(http.StatusOK, "index", nil)
+		}
+
+		// Call user info API with the access token as Bearer token
+		userReq, err := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v3/userinfo", nil)
+		if err != nil {
+			return err
+		}
+		userReq.Header.Add("Authorization", fmt.Sprintf("Bearer %v", cookie.Value))
+
+		userResp, err := http.DefaultClient.Do(userReq)
+		if err != nil {
+			return err
+		}
+		defer userResp.Body.Close()
+
+		var userInfo map[string]interface{}
+		if err := json.NewDecoder(userResp.Body).Decode(&userInfo); err != nil {
+			return err
+		}
+		fmt.Println("User Info:", userInfo)
+
+		userData := UserData{
+			Name: userInfo["given_name"].(string),
+		}
+
+		return c.Render(http.StatusOK, "index", userData)
 	})
+
+	e.GET("/oauth/authorize", func(c echo.Context) error {
+		return c.Redirect(http.StatusFound, fmt.Sprintf("https://accounts.google.com/o/oauth2/auth?client_id=%v&redirect_uri=%v&scope=https://www.googleapis.com/auth/userinfo.profile&response_type=code&access_type=offline", os.Getenv("CLIENT_ID"), os.Getenv("REDIRECT_URI")))
+	})
+
 	e.GET("/oauth/callback", func(c echo.Context) error {
 		query := c.QueryParams()
 		code := query["code"]
-		///https://www.googleapis.com/oauth2/v4/token
+		fmt.Println("Authorization Code:", code)
+
+		// Prepare token request
 		requestData := url.Values{
 			"code":          {code[0]},
 			"client_id":     {os.Getenv("CLIENT_ID")},
@@ -49,46 +86,73 @@ func main() {
 			"redirect_uri":  {os.Getenv("REDIRECT_URI")},
 			"grant_type":    {"authorization_code"},
 		}
+
 		req, err := http.NewRequest("POST", "https://www.googleapis.com/oauth2/v4/token", strings.NewReader(requestData.Encode()))
 		if err != nil {
-			panic(err)
+			return err
 		}
-
-		// Set headers
 		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
-		// Execute the request
+		// Execute token request
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		if err != nil {
-			panic(err)
+			return err
 		}
 		defer resp.Body.Close()
+
 		var result map[string]interface{}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			panic(err)
+			return err
 		}
-		fmt.Println(result["access_token"])
-		// call user info api with access token as bearer token
-		//https://www.googleapis.com/oauth2/v3/userinfo
-		req, err = http.NewRequest("GET", "https://www.googleapis.com/oauth2/v3/userinfo", nil)
-		if err != nil {
-			panic(err)
-		}
-		req.Header.Add("Authorization", fmt.Sprintf("Bearer %v", result["access_token"]))
+		fmt.Println("Access Token:", result["access_token"])
 
-		resp, err = client.Do(req)
+		// Call user info API with the access token as Bearer token
+		userReq, err := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v3/userinfo", nil)
 		if err != nil {
-			panic(err)
+			return err
 		}
-		defer resp.Body.Close()
+		userReq.Header.Add("Authorization", fmt.Sprintf("Bearer %v", result["access_token"]))
+
+		userResp, err := client.Do(userReq)
+		if err != nil {
+			return err
+		}
+		defer userResp.Body.Close()
+
 		var userInfo map[string]interface{}
-		if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
-			panic(err)
+		if err := json.NewDecoder(userResp.Body).Decode(&userInfo); err != nil {
+			return err
 		}
-		fmt.Println(userInfo)
+		fmt.Println("User Info:", userInfo)
 
-		return c.Redirect(302, "/")
+		// Set cookie with proper Path so it is available across the site
+		cookie := &http.Cookie{
+			Name:    "access_token",
+			Value:   result["access_token"].(string),
+			Path:    "/",
+			Expires: time.Now().Add(365 * 24 * time.Hour),
+			Secure:  true,
+		}
+		//c.SetCookie(cookie)
+		c.Response().Header().Set("Set-Cookie", cookie.String())
+		fmt.Println("Cookie Set:", cookie)
+
+		return c.Redirect(http.StatusFound, "/")
 	})
+	e.POST("/logout", func(c echo.Context) error {
+		cookie := &http.Cookie{
+			Name:    "access_token",
+			Value:   "",
+			Path:    "/",
+			Expires: time.Now().Add(-1 * time.Hour),
+			Secure:  true,
+		}
+		c.SetCookie(cookie)
+		fmt.Println("Cookie Set:", cookie)
+		return c.Redirect(http.StatusFound, "/")
+	})
+
 	e.Logger.Fatal(e.Start(":42069"))
 }
+

@@ -15,6 +15,12 @@
 
 	<h1>OIDC Login</h1>
 
+	{{ if .Name }}
+	<h2>Hello {{ .Name }}</h2>
+	<button hx-post="/logout" hx-target="body">Logout</button>
+	{{ else }}
+	<a href="/oauth/authorize">Login with Google</a>
+	{{ end }}
 </body>
 
 </html>

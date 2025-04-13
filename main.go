@@ -60,7 +60,6 @@ func main() {
 		if err := json.NewDecoder(userResp.Body).Decode(&userInfo); err != nil {
 			return err
 		}
-		fmt.Println("User Info:", userInfo)
 
 		userData := UserData{
 			Name: userInfo["given_name"].(string),
@@ -76,7 +75,6 @@ func main() {
 	e.GET("/oauth/callback", func(c echo.Context) error {
 		query := c.QueryParams()
 		code := query["code"]
-		fmt.Println("Authorization Code:", code)
 
 		// Prepare token request
 		requestData := url.Values{
@@ -105,7 +103,6 @@ func main() {
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			return err
 		}
-		fmt.Println("Access Token:", result["access_token"])
 
 		// Call user info API with the access token as Bearer token
 		userReq, err := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v3/userinfo", nil)
@@ -124,7 +121,6 @@ func main() {
 		if err := json.NewDecoder(userResp.Body).Decode(&userInfo); err != nil {
 			return err
 		}
-		fmt.Println("User Info:", userInfo)
 
 		// Set cookie with proper Path so it is available across the site
 		cookie := &http.Cookie{
@@ -136,7 +132,6 @@ func main() {
 		}
 		//c.SetCookie(cookie)
 		c.Response().Header().Set("Set-Cookie", cookie.String())
-		fmt.Println("Cookie Set:", cookie)
 
 		return c.Redirect(http.StatusFound, "/")
 	})
@@ -149,10 +144,8 @@ func main() {
 			Secure:  true,
 		}
 		c.SetCookie(cookie)
-		fmt.Println("Cookie Set:", cookie)
 		return c.Redirect(http.StatusFound, "/")
 	})
 
 	e.Logger.Fatal(e.Start(":42069"))
 }
-
